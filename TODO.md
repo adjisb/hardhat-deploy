@@ -1,6 +1,7 @@
 - [ ] --pendingtx : wait | reset | false | interactive
 - [ ] execute conditionals : if/unless
 - [ ] pause option on unknown signer : check once done and repeat if needed
+- [ ] automine as global option
 
 - [ ] support generator from (like templates for --export ?)
 - [ ] library name vs <path>:<name> and error out if ambiguity (when using only name)
@@ -19,3 +20,4 @@
 - [ ] error on Library missing in bytecode
 - [ ] error when not finding --no-scripts as folder
 - [ ] continue even if evm_snapshot not present on fixture call
+- [ ] supports ENS name in namedAccounts (fetch ENS first, or only if ends with .eth or other domain?, require mainnet provider)

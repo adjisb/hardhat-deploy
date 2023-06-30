@@ -1,5 +1,4 @@
 import './type-extensions';
-import chalk from 'chalk';
 import path from 'path';
 import fs from 'fs-extra';
 import murmur128 from 'murmur-128';
@@ -110,21 +109,23 @@ extendConfig(
       config.namedAccounts = {};
     }
 
+    config.deterministicDeployment = userConfig.deterministicDeployment;
+
     if (userConfig.external) {
       if (!config.external) {
         config.external = {};
       }
       if (userConfig.external.contracts) {
-        const externalContracts: {artifacts: string; deploy?: string}[] = [];
+        const externalContracts: {artifacts: string[]; deploy?: string}[] = [];
         config.external.contracts = externalContracts;
         for (const userDefinedExternalContracts of userConfig.external
           .contracts) {
+          const userArtifacts =
+            typeof userDefinedExternalContracts.artifacts === 'string'
+              ? [userDefinedExternalContracts.artifacts]
+              : userDefinedExternalContracts.artifacts;
           externalContracts.push({
-            artifacts: normalizePath(
-              config,
-              userDefinedExternalContracts.artifacts,
-              userDefinedExternalContracts.artifacts
-            ),
+            artifacts: userArtifacts.map((v) => normalizePath(config, v, v)),
             deploy: userDefinedExternalContracts.deploy
               ? normalizePath(
                   config,
@@ -150,12 +151,18 @@ extendConfig(
       setupExtraSolcSettings(compiler.settings);
     }
 
-    const defaultConfig = {apiKey: ''};
-    if (userConfig.etherscan !== undefined) {
-      const customConfig = userConfig.etherscan;
-      config.etherscan = {...defaultConfig, ...customConfig};
+    const defaultConfig = {};
+    if (userConfig.verify !== undefined) {
+      const customConfig = userConfig.verify;
+      config.verify = {...defaultConfig, ...customConfig};
     } else {
-      config.etherscan = defaultConfig;
+      config.verify = defaultConfig;
+      // backward compatibility for runtime (js)
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      if ((userConfig as any).etherscan) {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        config.verify.etherscan = (userConfig as any).etherscan;
+      }
     }
   }
 );
@@ -176,6 +183,7 @@ function createNetworkFromConfig(
     config,
     live: config.live,
     saveDeployments: config.saveDeployments,
+    zksync: config.zksync,
     tags,
     deploy: config.deploy || env.config.paths.deploy,
     companionNetworks: {},
@@ -197,6 +205,21 @@ function networkFromConfig(
   }
   if (network.config.live !== undefined) {
     live = network.config.live;
+  }
+
+  if (network.config.verify !== undefined) {
+    network.verify = network.config.verify;
+  } else {
+    // backward compatibility for runtime (js)
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    if ((network.config as any).etherscan) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      network.verify = {etherscan: (network.config as any).etherscan};
+    }
+  }
+
+  if (network.config.zksync !== undefined) {
+    network.zksync = network.config.zksync;
   }
 
   // associate tags to current network as object
@@ -229,6 +252,18 @@ function networkFromConfig(
   } else {
     network.saveDeployments = network.config.saveDeployments;
   }
+
+  let autoImpersonate = false;
+
+  if (networkName === 'hardhat') {
+    autoImpersonate = true;
+  }
+
+  if (network.config.autoImpersonate !== undefined) {
+    autoImpersonate = network.config.autoImpersonate;
+  }
+
+  network.autoImpersonate = autoImpersonate;
 }
 
 log('start...');
@@ -394,23 +429,27 @@ subtask(TASK_DEPLOY_RUN_DEPLOY, 'deploy run only')
   )
   .addFlag('reset', 'whether to delete deployments files first')
   .addFlag('log', 'whether to output log')
-  .setAction(async (args) => {
+  .addFlag('reportGas', 'report gas use')
+  .setAction(async (args, hre) => {
     let tags = args.tags;
     if (typeof tags === 'string') {
       tags = tags.split(',');
     }
-    return deploymentsManager.runDeploy(tags, {
+    await deploymentsManager.runDeploy(tags, {
       log: args.log,
       resetMemory: false,
       deletePreviousDeployments: args.reset,
       writeDeploymentsToFiles: args.write,
-      export: args.export,
-      exportAll: args.exportAll,
+      export: args.export || process.env.HARDHAT_DEPLOY_EXPORT,
+      exportAll: args.exportAll || process.env.HARDHAT_DEPLOY_EXPORT_ALL,
       savePendingTx: args.pendingtx,
       gasPrice: args.gasprice,
       maxFeePerGas: args.maxfee,
       maxPriorityFeePerGas: args.priorityfee,
     });
+    if (args.reportGas) {
+      console.log(`total gas used: ${hre.deployments.getGasUsed()}`);
+    }
   });
 
 subtask(TASK_DEPLOY_MAIN, 'deploy')
@@ -455,6 +494,7 @@ subtask(TASK_DEPLOY_MAIN, 'deploy')
     'watchOnly',
     'do not actually deploy, just watch and deploy if changes occurs'
   )
+  .addFlag('reportGas', 'report gas use')
   .setAction(async (args, hre) => {
     if (args.reset) {
       await deploymentsManager.deletePreviousDeployments(
@@ -610,6 +650,7 @@ task(TASK_DEPLOY, 'Deploy contracts')
   .addFlag('reset', 'whether to delete deployments files first')
   .addFlag('silent', 'whether to remove log')
   .addFlag('watch', 'redeploy on every change of contract or deploy script')
+  .addFlag('reportGas', 'report gas use')
   .setAction(async (args, hre) => {
     if (args.noImpersonation) {
       deploymentsManager.disableAutomaticImpersonation();
@@ -640,7 +681,10 @@ task(
   .addOptionalParam('exportAll', 'export all deployments into one file')
   .setAction(async (args) => {
     await deploymentsManager.loadDeployments(false);
-    await deploymentsManager.export(args);
+    await deploymentsManager.export({
+      export: args.export || process.env.HARDHAT_DEPLOY_EXPORT,
+      exportAll: args.exportAll || process.env.HARDHAT_DEPLOY_EXPORT_ALL,
+    });
   });
 
 async function enableProviderLogging(
@@ -686,7 +730,6 @@ task(TASK_NODE, 'Starts a JSON-RPC server on top of Hardhat EVM')
   .addFlag('noImpersonation', 'do not impersonate unknown accounts')
   .addFlag('silent', 'whether to renove log')
   .addFlag('noDeploy', 'do not deploy')
-  .addFlag('showAccounts', 'display account addresses and private keys')
   .addFlag('watch', 'redeploy on every change of contract or deploy script')
   .setAction(async (args, hre, runSuper) => {
     if (args.noImpersonation) {
@@ -750,16 +793,7 @@ subtask(TASK_NODE_GET_PROVIDER).setAction(
 );
 
 subtask(TASK_NODE_SERVER_READY).setAction(async (args, hre, runSuper) => {
-  if (nodeTaskArgs.showAccounts) {
-    await runSuper(args);
-  } else {
-    console.log(
-      chalk.green(
-        `Started HTTP and WebSocket JSON-RPC server at http://${args.address}:${args.port}/`
-      )
-    );
-    console.log();
-  }
+  await runSuper(args);
 
   if (nodeTaskArgs.watch) {
     await hre.run(TASK_DEPLOY_MAIN, {
@@ -778,6 +812,18 @@ task(TASK_ETHERSCAN_VERIFY, 'submit contract source code to etherscan')
     undefined,
     types.string
   )
+  .addOptionalParam(
+    'apiUrl',
+    'specify the url manually',
+    undefined,
+    types.string
+  )
+  .addOptionalParam(
+    'contractName',
+    'specific contract name to verify',
+    undefined,
+    types.string
+  )
   .addFlag(
     'forceLicense',
     'force the use of the license specified by --license option'
@@ -790,15 +836,16 @@ task(TASK_ETHERSCAN_VERIFY, 'submit contract source code to etherscan')
     'solcInput',
     'fallback on solc-input (useful when etherscan fails on the minimum sources, see https://github.com/ethereum/solidity/issues/9573)'
   )
-  // .addFlag(
-  //   'logHttpRequestOnError',
-  //   'log the whole http request for debugging purpose, this output your API key, so use it aknowingly'
-  // )
+  .addFlag(
+    'writePostData',
+    'write the post data on file in "etherscan_requests/<network>" folder, for debugging purpose'
+  )
   .setAction(async (args, hre) => {
     const etherscanApiKey =
       args.apiKey ||
       process.env.ETHERSCAN_API_KEY ||
-      hre.config.etherscan.apiKey;
+      hre.network.verify?.etherscan?.apiKey ||
+      hre.config.verify?.etherscan?.apiKey;
     if (!etherscanApiKey) {
       throw new Error(
         `No Etherscan API KEY provided. Set it through command line option, in hardhat.config.ts, or by setting the "ETHERSCAN_API_KEY" env variable`
@@ -806,12 +853,14 @@ task(TASK_ETHERSCAN_VERIFY, 'submit contract source code to etherscan')
     }
     const solcInputsPath = await deploymentsManager.getSolcInputPath();
     await submitSources(hre, solcInputsPath, {
+      contractName: args.contractName,
       etherscanApiKey,
       license: args.license,
       fallbackOnSolcInput: args.solcInput,
       forceLicense: args.forceLicense,
       sleepBetween: args.sleep,
-      // logHttpRequestOnError: args.logHttpRequestOnError
+      apiUrl: args.apiUrl || hre.network.verify?.etherscan?.apiUrl,
+      writePostData: args.writePostData,
     });
   });
 
@@ -822,6 +871,12 @@ task(
   .addOptionalParam(
     'endpoint',
     'endpoint url for sourcify',
+    undefined,
+    types.string
+  )
+  .addOptionalParam(
+    'contractName',
+    'specific contract name to verify',
     undefined,
     types.string
   )
@@ -844,6 +899,14 @@ task('export-artifacts')
     'solcInput',
     'if set, artifacts will have an associated solcInput files (required for old version of solidity to ensure verifiability'
   )
+  .addFlag(
+    'includingEmptyBytecode',
+    'if set, even contract without bytecode (like interfaces) will be exported'
+  )
+  .addFlag(
+    'includingNoPublicFunctions',
+    'if set, even contract without public interface (like imternal libraries) will be exported'
+  )
   .addOptionalParam(
     'exclude',
     'list of contract names separated by commas to exclude',
@@ -853,6 +916,16 @@ task('export-artifacts')
   .addOptionalParam(
     'include',
     'list of contract names separated by commas to include. If specified, only these will be considered',
+    undefined,
+    types.string
+  )
+  .addFlag(
+    'hideSources',
+    'if set, the artifacts files will not contain source code (metadata or other data exposing it) unless specified via --sources-for'
+  )
+  .addOptionalParam(
+    'sourcesFor',
+    'list of contract names separated by commas to include source (metadata,etc...) for (see --hide-sources)',
     undefined,
     types.string
   )
@@ -869,6 +942,16 @@ task('export-artifacts')
     );
     const argsExclude: string[] = args.exclude ? args.exclude.split(',') : [];
     const exclude = argsExclude.reduce(
+      (result: Record<string, boolean>, item: string) => {
+        result[item] = true;
+        return result;
+      },
+      {}
+    );
+    const argsSourcesFor: string[] = args.sourcesFor
+      ? args.sourcesFor.split(',')
+      : [];
+    const sourcesFor = argsSourcesFor.reduce(
       (result: Record<string, boolean>, item: string) => {
         result[item] = true;
         return result;
@@ -900,6 +983,21 @@ task('export-artifacts')
       const output =
         buildInfo.output.contracts[artifact.sourceName][artifactName];
 
+      if (!args.includingNoPublicFunctions) {
+        if (
+          !artifact.abi ||
+          artifact.abi.filter((v) => v.type !== 'event').length === 0
+        ) {
+          continue;
+        }
+      }
+
+      if (!args.includingEmptyBytecode) {
+        if (!artifact.bytecode || artifact.bytecode === '0x') {
+          continue;
+        }
+      }
+
       // TODO decide on ExtendedArtifact vs Artifact vs Deployment type
       // save space by not duplicating bytecodes
       if (output.evm?.bytecode?.object) {
@@ -926,9 +1024,51 @@ task('export-artifacts')
         extendedArtifact.solcInputHash = solcInputHash;
       }
 
-      fs.writeFileSync(
-        path.join(extendedArtifactFolderpath, artifactName + '.json'),
-        JSON.stringify(extendedArtifact, null, '  ')
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      let dataToWrite: any = extendedArtifact;
+      if (args.hideSources && !sourcesFor[artifactName]) {
+        dataToWrite = {
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          contractName: (extendedArtifact as any).contractName,
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          sourceName: (extendedArtifact as any).sourceName,
+          abi: extendedArtifact.abi,
+          bytecode: extendedArtifact.bytecode,
+          deployedBytecode: extendedArtifact.deployedBytecode,
+          linkReferences: extendedArtifact.linkReferences,
+          deployedLinkReferences: extendedArtifact.deployedLinkReferences,
+          devdoc: extendedArtifact.devdoc,
+          userdoc: extendedArtifact.userdoc,
+          evm: extendedArtifact.evm
+            ? {
+                gasEstimates: extendedArtifact.evm.gasEstimates,
+                methodIdentifiers: extendedArtifact.evm.methodIdentifiers,
+              }
+            : undefined,
+        };
+      }
+
+      let filepath = path.join(
+        extendedArtifactFolderpath,
+        artifactName + '.json'
       );
+      if (dataToWrite.sourceName) {
+        if (dataToWrite.contractName) {
+          filepath = path.join(
+            extendedArtifactFolderpath,
+            dataToWrite.sourceName,
+            dataToWrite.contractName + '.json'
+          );
+        } else {
+          filepath = path.join(
+            extendedArtifactFolderpath,
+            dataToWrite.sourceName,
+            artifactName + '.json'
+          );
+        }
+      }
+
+      fs.ensureFileSync(filepath);
+      fs.writeFileSync(filepath, JSON.stringify(dataToWrite, null, '  '));
     }
   });

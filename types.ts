@@ -68,19 +68,39 @@ export type Receipt = {
   confirmations?: number;
 };
 
-export type DiamondFacets = Array<string>; // TODO support Object for facet : {contract} // could be deploymentNames too ? or {abi,address}
+export type FacetOptions = {
+  name?: string;
+  contract?: string | ArtifactData;
+  args?: any[];
+  linkedData?: any; // JSONable ?
+  libraries?: Libraries;
+  deterministic?: boolean | string;
+};
+export type DiamondFacets = Array<string> | Array<FacetOptions>;
 export interface DiamondOptions extends TxOptions {
+  diamondContract?: string | ArtifactData; // TODO
+  diamondContractArgs?: any[];
   owner?: Address;
+  // defaultLoopeFacet?: boolean; // TODO // always there
+  defaultOwnershipFacet?: boolean;
+  defaultCutFacet?: boolean;
   facets: DiamondFacets;
   log?: boolean;
   libraries?: Libraries;
   linkedData?: any; // JSONable ?
   upgradeIndex?: number;
   execute?: {
+    contract?:
+      | string
+      | {name: string; artifact: string | ArtifactData; args?: any[]};
     methodName: string;
     args: any[];
   };
+  excludeSelectors?: {
+    [facetName: string]: string[]
+  };
   deterministicSalt?: string;
+  facetsArgs?: any[];
 }
 
 type ProxyOptionsBase = {
@@ -88,12 +108,16 @@ type ProxyOptionsBase = {
   upgradeIndex?: number;
   proxyContract?: // default to EIP173Proxy
   string | ArtifactData;
+  proxyArgs?: any[]; // default to ["{implementation}", "{admin}", "{data}"]
   viaAdminContract?:
     | string
     | {
         name: string;
         artifact?: string | ArtifactData;
       };
+  implementationName?: string;
+  checkABIConflict?: boolean;
+  checkProxyAdmin?: boolean;
 };
 
 export type ProxyOptions =
@@ -161,10 +185,11 @@ export interface CallOptions {
 
 export interface TxOptions extends CallOptions {
   from: string;
-  log?: boolean;
+  log?: boolean; // TODO string (for comment in log)
   autoMine?: boolean;
   estimatedGasLimit?: string | number | BigNumber;
   estimateGasExtra?: string | number | BigNumber;
+  waitConfirmations?: number;
 }
 
 export interface Execute extends TxOptions {
@@ -202,13 +227,20 @@ export interface DeploymentsExtension {
     options: Create2DeployOptions
   ): Promise<{
     address: Address;
+    implementationAddress?: Address;
     deploy(): Promise<DeployResult>;
   }>;
   fetchIfDifferent( // return true if new compiled code is different than deployed contract
     name: string,
     options: DeployOptions
   ): Promise<{differences: boolean; address?: string}>;
+
+  readDotFile(name: string): Promise<string>;
+  saveDotFile(name: string, content: string): Promise<void>;
+  deleteDotFile(name: string): Promise<void>;
+
   save(name: string, deployment: DeploymentSubmission): Promise<void>; // low level save of deployment
+  delete(name: string): Promise<void>;
   get(name: string): Promise<Deployment>; // fetch a deployment by name, throw if not existing
   getOrNull(name: string): Promise<Deployment | null>; // fetch deployment by name, return null if not existing
   getDeploymentsFromAddress(address: string): Promise<Deployment[]>;
@@ -234,6 +266,9 @@ export interface DeploymentsExtension {
     id?: string
   ): (options?: O) => Promise<T>;
   log(...args: any[]): void; // log data only ig log enabled (disabled in test fixture)
+
+  getNetworkName(): string;
+  getGasUsed(): number;
 
   execute( // execute function call on contract
     name: string,
@@ -274,7 +309,7 @@ export interface Export {
 }
 
 export type MultiExport = {
-  [chainId: string]: {[name: string]: Export};
+  [chainId: string]: Export[];
 };
 
 export type Libraries = {[libraryName: string]: Address};
@@ -311,7 +346,6 @@ export interface DeploymentSubmission {
   userdoc?: any;
   devdoc?: any;
   methodIdentifiers?: any;
-  diamondCut?: FacetCut[];
   facets?: Facet[];
   execute?: {
     methodName: string;
@@ -320,6 +354,7 @@ export interface DeploymentSubmission {
   storageLayout?: any;
   libraries?: Libraries;
   gasEstimates?: any;
+  factoryDeps?: string[];
 }
 
 // export type LibraryReferences = {
@@ -332,6 +367,7 @@ export interface Deployment {
   receipt?: Receipt;
   transactionHash?: string;
   history?: Deployment[];
+  numDeployments?: number;
   implementation?: string;
   args?: any[];
   linkedData?: any;
@@ -343,8 +379,15 @@ export interface Deployment {
   userdoc?: any;
   devdoc?: any;
   methodIdentifiers?: any;
-  diamondCut?: FacetCut[];
   facets?: Facet[];
   storageLayout?: any;
   gasEstimates?: any;
+  factoryDeps?: string[];
+}
+
+export interface DeterministicDeploymentInfo {
+  factory: string;
+  deployer: string;
+  funding: string;
+  signedTx: string;
 }

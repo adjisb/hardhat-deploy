@@ -1,5 +1,496 @@
 # hardhat-deploy
 
+## 0.11.34
+
+### Patch Changes
+
+- fix: \_setOwner before \_setImplementation in solc_0.8 EIP173Proxy by @gitpusha
+
+## 0.11.33
+
+### Patch Changes
+
+- Allow override custom proxy params (by @LeoVS09)
+
+## 0.11.32
+
+### Patch Changes
+
+- Add filtering of selectors by facets in Diamonds (by @idkravitz)
+
+## 0.11.31
+
+### Patch Changes
+
+- add bnreplacer to stringify values from ethers v6
+
+## 0.11.30
+
+### Patch Changes
+
+- fix ledger account @ifelsedeveloper
+
+## 0.11.29
+
+### Patch Changes
+
+- add trezor support
+
+## 0.11.28
+
+### Patch Changes
+
+- fix ledger
+
+## 0.11.27
+
+### Patch Changes
+
+- fix ledger support by @stupid-boar
+
+## 0.11.26
+
+### Patch Changes
+
+- use pnpm + support latest zksync
+
+## 0.11.25
+
+### Patch Changes
+
+- allow to export as typescript const
+
+## 0.11.24
+
+### Patch Changes
+
+- allow to use HARDHAT_DEPLOY_EXPORT for the export command too
+
+## 0.11.23
+
+### Patch Changes
+
+- Adding the Sepolia network to the network list, so we can verify contracts in the Sepolia network.
+
+## 0.11.22
+
+### Patch Changes
+
+- fix UUPS upgrade logic
+
+## 0.11.21
+
+### Patch Changes
+
+- add UUPS optio
+
+## 0.11.20
+
+### Patch Changes
+
+- preliminary work for external tx support
+
+## 0.11.19
+
+### Patch Changes
+
+- Added chain id 421613 and API endpoint https://api-goerli.arbiscan.io
+
+## 0.11.18
+
+### Patch Changes
+
+- fix typo for export
+
+## 0.11.17
+
+### Patch Changes
+
+- add env variable for EXPORT
+
+## 0.11.16
+
+### Patch Changes
+
+- fix(367): catch exceptions by artifactExists
+
+## 0.11.15
+
+### Patch Changes
+
+- support optimism-goerli
+
+## 0.11.14
+
+### Patch Changes
+
+- catch evm_snapshot and evm_revert errors
+
+## 0.11.13
+
+### Patch Changes
+
+- upgrade zksync-web by @MarkuSchick
+
+## 0.11.12
+
+### Patch Changes
+
+- fix DiamondLoupeFacet
+
+## 0.11.11
+
+### Patch Changes
+
+- Update the dependencies for latest deployment of the zkSync v2 test network.
+
+## 0.11.10
+
+### Patch Changes
+
+- export-artifacts: do not export libraries or interfaces by defaults
+
+## 0.11.9
+
+### Patch Changes
+
+- preserve artifact dir structure when exporting
+
+## 0.11.8
+
+### Patch Changes
+
+- fix --hide-sources
+
+## 0.11.7
+
+### Patch Changes
+
+- rename --no-metadata to --hide-sources
+
+## 0.11.6
+
+### Patch Changes
+
+- ability to export artifact without metadata
+
+## 0.11.5
+
+### Patch Changes
+
+- a103f2d: workaround for ledger
+- 283ec68: zksync support
+
+## 0.11.5-zksync.1
+
+### Patch Changes
+
+- workaround for ledger
+
+## 0.11.5-zksync.0
+
+### Patch Changes
+
+- zksync support
+
+## 0.11.4
+
+### Patch Changes
+
+- add metis block explorer
+
+## 0.11.3
+
+### Patch Changes
+
+- fix proxyAdmin
+
+## 0.11.2
+
+### Patch Changes
+
+- 8bbfbae: add --contract-name to etherscan-verify
+
+## 0.11.1
+
+### Patch Changes
+
+- do not resave, increasing unecessarely numDeployments for diamond
+
+## 0.11.0
+
+### Minor Changes
+
+- 54ad195: revamp diamond support
+
+### Patch Changes
+
+- 3216a31: fix old diamond detection
+- e8737d5: fix
+- e40546a: fix
+- 0810042: diamond : do not save diamondCut + do not resave if no changes
+- 5602a44: support old diamond + fix Loupe typo
+
+## 0.11.0-next.5
+
+### Patch Changes
+
+- diamond : do not save diamondCut + do not resave if no changes
+
+## 0.11.0-next.4
+
+### Patch Changes
+
+- fix old diamond detection
+
+## 0.11.0-next.3
+
+### Patch Changes
+
+- support old diamond + fix Loupe typo
+
+## 0.11.0-next.2
+
+### Patch Changes
+
+- fix
+
+## 0.11.0-next.1
+
+### Patch Changes
+
+- fix
+
+## 0.11.0-next.0
+
+### Minor Changes
+
+- revamp diamond support
+
+## 0.10.6
+
+### Patch Changes
+
+- add --contract-name to sourcify to specify only one contract to be verified
+
+## 0.10.5
+
+### Patch Changes
+
+- do nor override original receipt for diamond
+
+## 0.10.5-zksync.0
+
+### Patch Changes
+
+- zksync support
+
+## 0.10.4
+
+### Patch Changes
+
+- simplify the export-all format
+
+## 0.10.3
+
+### Patch Changes
+
+- 42e5330: export option for etherscan request, now even with no error
+
+## 0.10.2
+
+### Patch Changes
+
+- more debugging output for etherscan
+
+## 0.10.1
+
+### Patch Changes
+
+- add writePostDataOnError option for etherscan
+
+## 0.10.0
+
+### Minor Changes
+
+- etherscan config updates: use verify + add optin to set apiURL
+
+## 0.9.29
+
+### Patch Changes
+
+- - allow exporting to STDOUT via special - filepath
+  - add BUSL-1.1 license support at Etherscan verification tool
+  - fix waitConfirmations
+  - add --api-url for etherscan-verify
+
+## 0.9.28
+
+### Patch Changes
+
+- support multiple artifacts folder for external deploy script
+
+## 0.9.27
+
+### Patch Changes
+
+- fix facet artifact metadata missing
+
+## 0.9.26
+
+### Patch Changes
+
+- adding onlyOwner for Diamond
+
+## 0.9.25
+
+### Patch Changes
+
+- add facet options
+
+## 0.9.24
+
+### Patch Changes
+
+- implementationName => used a contract by default
+
+## 0.9.23
+
+### Patch Changes
+
+- support proxyArgs for UUPS + allow to specify implementationName to reuse implementation across multiple proxies
+
+## 0.9.22
+
+### Patch Changes
+
+- ensure dir exist for exports
+
+## 0.9.21
+
+### Patch Changes
+
+- remove showAccount as now hardhta-deploy hide it by default unless it is the default test mnemonic, use latest hardhat as peer deps
+
+## 0.9.20
+
+### Patch Changes
+
+- throw if multiple artifact with same not-fully qualified exist from hardhat artifacts
+
+## 0.9.19
+
+### Patch Changes
+
+- remove previousDeployment saving
+
+## 0.9.18
+
+### Patch Changes
+
+- allow etherscan api key config per network
+
+## 0.9.17
+
+### Patch Changes
+
+- support @anders-t/ethers-ledger for ledger support
+
+## 0.9.16
+
+### Patch Changes
+
+- cleanup overrides for ethers
+
+## 0.9.15
+
+### Patch Changes
+
+- use numDeployments instead of history to not have deployment file grow in size too much
+
+## 0.9.14
+
+### Patch Changes
+
+- always setup accounts, was only doing it when loading unnamed or named accounts
+
+## 0.9.13
+
+### Patch Changes
+
+- add --report-gas
+
+## 0.9.12
+
+### Patch Changes
+
+- fix getNetworkName
+
+## 0.9.11
+
+### Patch Changes
+
+- add getNetworkName() which return the forked name if any
+
+## 0.9.10
+
+### Patch Changes
+
+- fix forgot to add readDotFile to types
+
+## 0.9.9
+
+### Patch Changes
+
+- add readDotFile
+
+## 0.9.8
+
+### Patch Changes
+
+- add wau to delete deployment and dotFIles
+
+## 0.9.7
+
+### Patch Changes
+
+- more etherscan-verify destination + saveDotFile
+
+## 0.9.6
+
+### Patch Changes
+
+- if deployment's tx is not found, error out to prevent redeployment by mistake
+
+## 0.9.5
+
+### Patch Changes
+
+- add etherscan for avalanche
+
+## 0.9.4
+
+### Patch Changes
+
+- add arbitrum testnet etherscan + add missing deps
+
+## 0.9.3
+
+### Patch Changes
+
+- fix deterministic function for proxies
+
+## 0.9.2
+
+### Patch Changes
+
+- - fix diamantaire diamonds constructor args generation
+  - Allow to define custom deterministic deployment information
+  - Skip Implementation deployment if already deployed
+  - Delete libraries link from proxy deploymen
+  - Add option to wait for specific number of confirmation when deploy a contract
+  - allow multiple export files by separating via commas
+
 ## 0.9.1
 
 ### Patch Changes

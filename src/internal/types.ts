@@ -8,7 +8,13 @@ import {
 } from '../../types';
 
 export interface PartialExtension {
+  readDotFile(name: string): Promise<string>;
+  saveDotFile(name: string, content: string): Promise<void>;
+  deleteDotFile(name: string): Promise<void>;
+
   save(name: string, deployment: DeploymentSubmission): Promise<void>;
+  delete(name: string): Promise<void>;
+
   get(name: string): Promise<Deployment>;
   getOrNull(name: string): Promise<Deployment | null>;
   getDeploymentsFromAddress(address: string): Promise<Deployment[]>;
@@ -34,4 +40,7 @@ export interface PartialExtension {
     id?: string
   ): (options?: O) => Promise<T>;
   log(...args: unknown[]): void;
+
+  getNetworkName(): string;
+  getGasUsed(): number;
 }

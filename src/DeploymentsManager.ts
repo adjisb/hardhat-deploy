@@ -6,6 +6,7 @@ import {
   FixtureFunc,
   DeploymentSubmission,
   Export,
+  DeterministicDeploymentInfo,
 } from '../types';
 import {ExtendedArtifact} from '../types';
 import {PartialExtension} from './internal/types';
@@ -24,8 +25,8 @@ import {
   loadAllDeployments,
   traverseMultipleDirectory,
   deleteDeployments,
-  getExtendedArtifactFromFolder,
-  getArtifactFromFolder,
+  getExtendedArtifactFromFolders,
+  getArtifactFromFolders,
   getNetworkName,
   getDeployPaths,
 } from './utils';
@@ -33,11 +34,13 @@ import {addHelpers, waitForTx} from './helpers';
 import {TransactionResponse} from '@ethersproject/providers';
 import {Artifact, HardhatRuntimeEnvironment, Network} from 'hardhat/types';
 import {store} from './globalStore';
+import {bnReplacer} from './internal/utils';
 
 export class DeploymentsManager {
   public deploymentsExtension: DeploymentsExtension;
 
   private db: {
+    gasUsed: BigNumber;
     accountsLoaded: boolean;
     namedAccounts: {[name: string]: string};
     unnamedAccounts: string[];
@@ -62,7 +65,7 @@ export class DeploymentsManager {
     maxFeePerGas?: string;
     maxPriorityFeePerGas?: string;
     migrations: {[id: string]: number};
-    onlyArtifacts?: string;
+    onlyArtifacts?: string[];
     runAsNode: boolean;
   };
 
@@ -115,6 +118,7 @@ export class DeploymentsManager {
     this.impersonateUnknownAccounts = true;
     this.impersonatedAccounts = [];
     this.db = {
+      gasUsed: BigNumber.from(0),
       accountsLoaded: false,
       namedAccounts: {},
       unnamedAccounts: [],
@@ -138,10 +142,20 @@ export class DeploymentsManager {
     // this.env.artifacts = new HardhatDeployArtifacts(this.env.artifacts);
 
     this.partialExtension = {
+      readDotFile: async (name: string): Promise<string> =>
+        this.readDotFile(name),
+      saveDotFile: async (name: string, content: string): Promise<void> =>
+        this.saveDotFile(name, content),
+      deleteDotFile: async (name: string): Promise<void> =>
+        this.deleteDotFile(name),
       save: async (
         name: string,
         deployment: DeploymentSubmission
-      ): Promise<boolean> => this.saveDeployment(name, deployment),
+      ): Promise<void> => {
+        this.saveDeployment(name, deployment);
+      },
+      delete: async (name: string): Promise<void> =>
+        this.deleteDeployment(name),
       get: async (name: string) => {
         await this.setup(false);
         const deployment = this.db.deployments[name];
@@ -169,7 +183,7 @@ export class DeploymentsManager {
       },
       getArtifact: async (contractName: string): Promise<Artifact> => {
         if (this.db.onlyArtifacts) {
-          const artifactFromFolder = await getArtifactFromFolder(
+          const artifactFromFolder = await getArtifactFromFolders(
             contractName,
             this.db.onlyArtifacts
           );
@@ -181,31 +195,25 @@ export class DeploymentsManager {
           return artifactFromFolder as Artifact;
         }
         let artifact: Artifact | ExtendedArtifact | undefined =
-          await getArtifactFromFolder(
-            contractName,
-            this.env.config.paths.artifacts
-          );
+          await getArtifactFromFolders(contractName, [
+            this.env.config.paths.artifacts,
+          ]);
         if (artifact) {
           return artifact as Artifact;
         }
         const importPaths = this.getImportPaths();
-        for (const importPath of importPaths) {
-          artifact = await getArtifactFromFolder(contractName, importPath);
-          if (artifact) {
-            return artifact as Artifact;
-          }
-        }
+        artifact = await getArtifactFromFolders(contractName, importPaths);
 
         if (!artifact) {
           throw new Error(`cannot find artifact "${contractName}"`);
         }
-        return artifact;
+        return artifact as Artifact;
       },
       getExtendedArtifact: async (
         contractName: string
       ): Promise<ExtendedArtifact> => {
         if (this.db.onlyArtifacts) {
-          const artifactFromFolder = await getExtendedArtifactFromFolder(
+          const artifactFromFolder = await getExtendedArtifactFromFolders(
             contractName,
             this.db.onlyArtifacts
           );
@@ -217,22 +225,19 @@ export class DeploymentsManager {
           return artifactFromFolder as ExtendedArtifact;
         }
         let artifact: ExtendedArtifact | undefined =
-          await getExtendedArtifactFromFolder(
-            contractName,
-            this.env.config.paths.artifacts
-          );
+          await getExtendedArtifactFromFolders(contractName, [
+            this.env.config.paths.artifacts,
+          ]);
         if (artifact) {
           return artifact;
         }
         const importPaths = this.getImportPaths();
-        for (const importPath of importPaths) {
-          artifact = await getExtendedArtifactFromFolder(
-            contractName,
-            importPath
-          );
-          if (artifact) {
-            return artifact;
-          }
+        artifact = await getExtendedArtifactFromFolders(
+          contractName,
+          importPaths
+        );
+        if (artifact) {
+          return artifact;
         }
 
         if (!artifact) {
@@ -324,7 +329,7 @@ export class DeploymentsManager {
         return async (options?: O) => {
           let id = baseId;
           if (options !== undefined) {
-            id = id + JSON.stringify(options);
+            id = id + JSON.stringify(options, bnReplacer);
           }
           const saved = this.db.pastFixtures[id];
           if (saved) {
@@ -343,7 +348,9 @@ export class DeploymentsManager {
           console.log(...args);
         }
       },
-    } as any;
+      getNetworkName: () => this.getNetworkName(),
+      getGasUsed: () => this.db.gasUsed.toNumber(),
+    } as PartialExtension;
 
     const print = (msg: string) => {
       if (this.db.logEnabled) {
@@ -534,12 +541,12 @@ export class DeploymentsManager {
         : {rawTx, decoded};
       fs.writeFileSync(
         pendingTxPath,
-        JSON.stringify(this.db.pendingTransactions, null, '  ')
+        JSON.stringify(this.db.pendingTransactions, bnReplacer, '  ')
       );
       // await new Promise(r => setTimeout(r, 20000));
       const wait = tx.wait.bind(tx);
-      tx.wait = async () => {
-        const receipt = await wait();
+      tx.wait = async (confirmations?: number) => {
+        const receipt = await wait(confirmations);
         // console.log("checking pending tx...");
         delete this.db.pendingTransactions[tx.hash];
         if (Object.keys(this.db.pendingTransactions).length === 0) {
@@ -547,9 +554,17 @@ export class DeploymentsManager {
         } else {
           fs.writeFileSync(
             pendingTxPath,
-            JSON.stringify(this.db.pendingTransactions, null, '  ')
+            JSON.stringify(this.db.pendingTransactions, bnReplacer, '  ')
           );
         }
+        this.db.gasUsed = this.db.gasUsed.add(receipt.gasUsed);
+        return receipt;
+      };
+    } else {
+      const wait = tx.wait.bind(tx);
+      tx.wait = async (confirmations?: number) => {
+        const receipt = await wait(confirmations);
+        this.db.gasUsed = this.db.gasUsed.add(receipt.gasUsed);
         return receipt;
       };
     }
@@ -564,6 +579,37 @@ export class DeploymentsManager {
   public async getUnnamedAccounts(): Promise<string[]> {
     await this.setupAccounts();
     return this.db.unnamedAccounts;
+  }
+
+  private async getDeterminisityDeploymentInfo(): Promise<
+    DeterministicDeploymentInfo | undefined
+  > {
+    const chainId = await this.getChainId();
+    const config = this.env.config.deterministicDeployment;
+    return typeof config == 'function' ? config(chainId) : config?.[chainId];
+  }
+
+  public async getDeterministicDeploymentFactoryAddress(): Promise<string> {
+    const info = await this.getDeterminisityDeploymentInfo();
+    return info?.factory || '0x4e59b44847b379578588920ca78fbf26c0b4956c';
+  }
+
+  public async getDeterministicDeploymentFactoryDeployer(): Promise<string> {
+    const info = await this.getDeterminisityDeploymentInfo();
+    return info?.deployer || '0x3fab184622dc19b6109349b94811493bf2a45362';
+  }
+
+  public async getDeterministicDeploymentFactoryFunding(): Promise<BigNumber> {
+    const info = await this.getDeterminisityDeploymentInfo();
+    return BigNumber.from(info?.funding || '10000000000000000');
+  }
+
+  public async getDeterministicDeploymentFactoryDeploymentTx(): Promise<string> {
+    const info = await this.getDeterminisityDeploymentInfo();
+    return (
+      info?.signedTx ||
+      '0xf8a58085174876e800830186a08080b853604580600e600039806000f350fe7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffe03601600081602082378035828234f58015156039578182fd5b8082525050506014600cf31ba02222222222222222222222222222222222222222222222222222222222222222a02222222222222222222222222222222222222222222222222222222222222222'
+    );
   }
 
   public async loadDeployments(
@@ -628,10 +674,99 @@ export class DeploymentsManager {
     );
   }
 
+  public async deleteDotFile(name: string): Promise<void> {
+    const toSave =
+      this.db.writeDeploymentsToFiles && this.network.saveDeployments;
+
+    if (toSave) {
+      // do not delete if not save mode
+      const deployFolderpath = path.join(
+        this.deploymentsPath,
+        this.deploymentFolder()
+      );
+      const filepath = path.join(deployFolderpath, name);
+
+      try {
+        fs.unlinkSync(filepath);
+      } catch (e) {}
+    }
+  }
+
+  public async readDotFile(name: string): Promise<string> {
+    if (!name.startsWith('.')) {
+      throw new Error(
+        `file to save need to start with a dot to ensure it is not considered a deployment`
+      );
+    }
+
+    const deployFolderpath = path.join(
+      this.deploymentsPath,
+      this.deploymentFolder()
+    );
+
+    const filepath = path.join(deployFolderpath, name);
+    return fs.readFileSync(filepath).toString();
+  }
+
+  public async saveDotFile(name: string, content: string): Promise<void> {
+    if (!name.startsWith('.')) {
+      throw new Error(
+        `file to save need to start with a dot to ensure it is not considered a deployment`
+      );
+    }
+
+    const toSave =
+      this.db.writeDeploymentsToFiles && this.network.saveDeployments;
+
+    if (toSave) {
+      const chainId = await this.getChainId();
+      const deployFolderpath = path.join(
+        this.deploymentsPath,
+        this.deploymentFolder()
+      );
+
+      const filepath = path.join(deployFolderpath, name);
+      fs.ensureDirSync(deployFolderpath);
+      const chainIdFilepath = path.join(deployFolderpath, '.chainId');
+      if (!fs.existsSync(chainIdFilepath)) {
+        fs.writeFileSync(chainIdFilepath, chainId);
+      }
+      const folderPath = path.dirname(filepath);
+      fs.ensureDirSync(folderPath);
+      fs.writeFileSync(filepath, content);
+    }
+  }
+
+  public async deleteDeployment(name: string): Promise<void> {
+    delete this.db.deployments[name];
+
+    const toSave =
+      this.db.writeDeploymentsToFiles && this.network.saveDeployments;
+
+    if (toSave) {
+      // do not delete if not save mode
+      const filepath = path.join(
+        this.deploymentsPath,
+        this.deploymentFolder(),
+        name + '.json'
+      );
+
+      try {
+        fs.unlinkSync(filepath);
+      } catch (e) {}
+    }
+  }
+
   public async saveDeployment(
     name: string,
     deployment: DeploymentSubmission
   ): Promise<boolean> {
+    if (name.includes('/') || name.includes(':')) {
+      throw new Error(
+        `deployment name must not be a path or Fully Qualified Name - for such purposes consider using the "contract" field of deployment options`
+      );
+    }
+
     if (
       typeof deployment.address === undefined &&
       !deployment.receipt?.contractAddress
@@ -712,32 +847,49 @@ export class DeploymentsManager {
 
     const actualArgs = deployment.args?.map(transform);
 
+    let numDeployments = 1;
+    const oldDeployment = this.db.deployments[name]
+      ? {...this.db.deployments[name]}
+      : undefined;
+    if (oldDeployment) {
+      numDeployments = (oldDeployment.numDeployments || 1) + 1;
+      if (!deployment.history) {
+        delete oldDeployment.history;
+      }
+    }
+
     const obj = JSON.parse(
-      JSON.stringify({
-        address: deployment.address || actualReceipt?.contractAddress,
-        abi: deployment.abi,
-        transactionHash:
-          deployment.transactionHash || actualReceipt?.transactionHash,
-        receipt: actualReceipt,
-        args: actualArgs,
-        linkedData: deployment.linkedData,
-        solcInputHash: deployment.solcInputHash,
-        metadata: deployment.metadata,
-        bytecode: deployment.bytecode,
-        deployedBytecode: deployment.deployedBytecode,
-        libraries: deployment.libraries,
-        facets: deployment.facets,
-        diamondCut: deployment.diamondCut,
-        execute: deployment.execute,
-        history: deployment.history,
-        implementation: deployment.implementation,
-        devdoc: deployment.devdoc,
-        userdoc: deployment.userdoc,
-        storageLayout: deployment.storageLayout,
-        methodIdentifiers: deployment.methodIdentifiers,
-        gasEstimates: deployment.gasEstimates, // TODO double check : use evm field ?
-      })
+      JSON.stringify(
+        {
+          address: deployment.address || actualReceipt?.contractAddress,
+          abi: deployment.abi,
+          transactionHash:
+            deployment.transactionHash || actualReceipt?.transactionHash,
+          receipt: actualReceipt,
+          args: actualArgs,
+          numDeployments,
+          linkedData: deployment.linkedData,
+          solcInputHash: deployment.solcInputHash,
+          metadata: deployment.metadata,
+          bytecode: deployment.bytecode,
+          deployedBytecode: deployment.deployedBytecode,
+          libraries: deployment.libraries,
+          facets: deployment.facets,
+          execute: deployment.execute,
+          history: deployment.history,
+          implementation: deployment.implementation,
+          devdoc: deployment.devdoc,
+          userdoc: deployment.userdoc,
+          storageLayout: deployment.storageLayout,
+          methodIdentifiers: deployment.methodIdentifiers,
+          gasEstimates: deployment.gasEstimates, // TODO double check : use evm field ?
+        },
+        bnReplacer
+      )
     );
+    if (deployment.factoryDeps?.length) {
+      obj.factoryDeps = deployment.factoryDeps;
+    }
     this.db.deployments[name] = obj;
     if (obj.address === undefined && obj.transactionHash !== undefined) {
       let receiptFetched;
@@ -782,7 +934,7 @@ export class DeploymentsManager {
         fs.writeFileSync(chainIdFilepath, chainId);
       }
 
-      fs.writeFileSync(filepath, JSON.stringify(obj, null, '  '));
+      fs.writeFileSync(filepath, JSON.stringify(obj, bnReplacer, '  '));
 
       if (deployment.solcInputHash && deployment.solcInput) {
         const solcInputsFolderpath = path.join(
@@ -851,6 +1003,7 @@ export class DeploymentsManager {
     }
 
     await this.loadDeployments();
+    this.db.gasUsed = BigNumber.from(0);
     this.db.writeDeploymentsToFiles = options.writeDeploymentsToFiles;
     this.db.savePendingTx = options.savePendingTx;
     this.db.logEnabled = options.log;
@@ -1111,7 +1264,7 @@ export class DeploymentsManager {
                   deploymentFolderPath,
                   '.migrations.json'
                 ),
-                JSON.stringify(this.db.migrations, null, '  ')
+                JSON.stringify(this.db.migrations, bnReplacer, '  ')
               );
             }
           }
@@ -1166,18 +1319,19 @@ export class DeploymentsManager {
           linkedData: deployment.linkedData,
         };
       }
+      const currentNetwork = this.getDeploymentNetworkName();
       if (all[chainId] === undefined) {
-        all[chainId] = {};
+        all[chainId] = [];
       } else {
-        // Ensure no past deployments are recorded
-        delete all[chainId][this.getDeploymentNetworkName()];
+        all[chainId] = all[chainId].filter((v) => v.name !== currentNetwork);
       }
-      all[chainId][this.getDeploymentNetworkName()] = {
-        name: this.getDeploymentNetworkName(),
+      all[chainId].push({
+        name: currentNetwork,
         chainId,
         contracts: currentNetworkDeployments,
-      };
-      fs.writeFileSync(options.exportAll, JSON.stringify(all, null, '  ')); // TODO remove bytecode ?
+      });
+      this._writeExports(options.exportAll, all);
+
       log('export-all complete');
     }
 
@@ -1208,11 +1362,29 @@ export class DeploymentsManager {
         chainId,
         contracts: currentNetworkDeployments,
       };
-      fs.writeFileSync(
-        options.export,
-        JSON.stringify(singleExport, null, '  ')
-      ); // TODO remove bytecode ?
+
+      this._writeExports(options.export, singleExport);
       log('single export complete');
+    }
+  }
+
+  private _writeExports(dests: string, outputObject: any) {
+    const output = JSON.stringify(outputObject, bnReplacer, '  '); // TODO remove bytecode ?
+    const splitted = dests.split(',');
+    for (const split of splitted) {
+      if (!split) {
+        continue;
+      }
+      if (split === '-') {
+        process.stdout.write(output);
+      } else {
+        fs.ensureDirSync(path.dirname(split));
+        if (split.endsWith('.ts')) {
+          fs.writeFileSync(split, `export default ${output} as const;`);
+        } else {
+          fs.writeFileSync(split, output);
+        }
+      }
     }
   }
 
@@ -1220,7 +1392,7 @@ export class DeploymentsManager {
     const importPaths = [this.env.config.paths.imports];
     if (this.env.config.external && this.env.config.external.contracts) {
       for (const externalContracts of this.env.config.external.contracts) {
-        importPaths.push(externalContracts.artifacts);
+        importPaths.push(...externalContracts.artifacts);
       }
     }
     return importPaths;
@@ -1254,14 +1426,18 @@ export class DeploymentsManager {
       'eth_getBlockByNumber',
       ['latest', false]
     );
-    const snapshot = await this.network.provider.send('evm_snapshot', []);
-    this.db.pastFixtures[key] = {
-      index: ++this.db.snapshotCounter,
-      snapshot,
-      data,
-      blockHash: latestBlock.hash,
-      deployments: {...this.db.deployments},
-    };
+    try {
+      const snapshot = await this.network.provider.send('evm_snapshot', []);
+      this.db.pastFixtures[key] = {
+        index: ++this.db.snapshotCounter,
+        snapshot,
+        data,
+        blockHash: latestBlock.hash,
+        deployments: {...this.db.deployments},
+      };
+    } catch (err) {
+      log(`failed to create snapshot`);
+    }
   }
 
   private async revertSnapshot(saved: {
@@ -1277,9 +1453,15 @@ export class DeploymentsManager {
         delete this.db.pastFixtures[fixtureKey];
       }
     }
-    const success = await this.network.provider.send('evm_revert', [
-      saved.snapshot,
-    ]);
+    let success;
+    try {
+      success = await this.network.provider.send('evm_revert', [
+        saved.snapshot,
+      ]);
+    } catch {
+      log(`failed to revert to snapshot`);
+      success = false;
+    }
     if (success) {
       const blockRetrieved = await this.network.provider.send(
         'eth_getBlockByHash',
@@ -1315,7 +1497,28 @@ export class DeploymentsManager {
     return this.getDeploymentNetworkName();
   }
 
-  private async setupAccounts(): Promise<{
+  private async impersonateAccounts(unknownAccounts: string[]) {
+    if (
+      !this.impersonateUnknownAccounts ||
+      process.env.HARDHAT_DEPLOY_NO_IMPERSONATION
+    ) {
+      return;
+    }
+
+    if (this.network.autoImpersonate) {
+      for (const address of unknownAccounts) {
+        if (this.network.name === 'hardhat') {
+          await this.network.provider.request({
+            method: 'hardhat_impersonateAccount',
+            params: [address],
+          });
+        }
+        this.impersonatedAccounts.push(address);
+      }
+    }
+  }
+
+  public async setupAccounts(): Promise<{
     namedAccounts: {[name: string]: string};
     unnamedAccounts: string[];
   }> {
@@ -1333,19 +1536,9 @@ export class DeploymentsManager {
         accounts,
         chainId
       ); // TODO pass in network name
-      if (
-        this.network.name === 'hardhat' &&
-        this.impersonateUnknownAccounts &&
-        !process.env.HARDHAT_DEPLOY_NO_IMPERSONATION
-      ) {
-        for (const address of unknownAccounts) {
-          await this.network.provider.request({
-            method: 'hardhat_impersonateAccount',
-            params: [address],
-          });
-          this.impersonatedAccounts.push(address);
-        }
-      }
+
+      await this.impersonateAccounts(unknownAccounts);
+
       this.db.namedAccounts = namedAccounts;
       this.db.unnamedAccounts = unnamedAccounts;
       this.db.accountsLoaded = true;

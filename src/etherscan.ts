@@ -28,6 +28,31 @@ function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+function writeRequestIfRequested(
+  write: boolean,
+  networkName: string,
+  name: string,
+  request: string,
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  postData: any
+) {
+  if (write) {
+    try {
+      fs.mkdirSync('etherscan_requests');
+    } catch (e) {}
+    const folder = `etherscan_requests/${networkName}`;
+    try {
+      fs.mkdirSync(folder);
+    } catch (e) {}
+    fs.writeFileSync(`${folder}/${name}.formdata`, request);
+    fs.writeFileSync(`${folder}/${name}.json`, JSON.stringify(postData));
+    fs.writeFileSync(
+      `${folder}/${name}_multi-source.json`,
+      postData.sourceCode
+    );
+  }
+}
+
 function extractOneLicenseFromSourceFile(source: string): string | undefined {
   const licenses = extractLicenseFromSources(source);
   if (licenses.length === 0) {
@@ -93,6 +118,9 @@ function getLicenseType(license: string): undefined | number {
     if (license === 'AGPL-3.0') {
       return 13;
     }
+    if (license === 'BUSL-1.1') {
+      return 14;
+    }
   })();
   return licenseType;
 }
@@ -101,11 +129,14 @@ export async function submitSources(
   hre: HardhatRuntimeEnvironment,
   solcInputsPath: string,
   config?: {
+    contractName?: string;
     etherscanApiKey?: string;
     license?: string;
     fallbackOnSolcInput?: boolean;
     forceLicense?: boolean;
     sleepBetween?: boolean;
+    apiUrl?: string;
+    writePostData?: boolean;
   }
 ): Promise<void> {
   config = config || {};
@@ -114,57 +145,98 @@ export async function submitSources(
   const forceLicense = config.forceLicense;
   const etherscanApiKey = config.etherscanApiKey;
   const sleepBetween = config.sleepBetween;
-  const chainId = await hre.getChainId();
   const all = await hre.deployments.all();
-  let host: string;
-  switch (chainId) {
-    case '1':
-      host = 'https://api.etherscan.io';
-      break;
-    case '3':
-      host = 'https://api-ropsten.etherscan.io';
-      break;
-    case '4':
-      host = 'https://api-rinkeby.etherscan.io';
-      break;
-    case '5':
-      host = 'https://api-goerli.etherscan.io';
-      break;
-    case '42':
-      host = 'https://api-kovan.etherscan.io';
-      break;
-    case '97':
-      host = 'https://api-testnet.bscscan.com';
-      break;
-    case '56':
-      host = 'https://api.bscscan.com';
-      break;
-    case '128':
-      host = 'https://api.hecoinfo.com';
-      break;
-    case '137':
-      host = 'https://api.polygonscan.com';
-      break;
-    case '250':
-      host = 'https://api.ftmscan.com';
-      break;
-    case '70':
-      host = 'https://api.hooscan.com';
-      break;
-    case '256':
-      host = 'https://api-testnet.hecoinfo.com';
-      break;
-    case '80001':
-      host = 'https://api-testnet.polygonscan.com';
-      break; 
-    case '4002':
-      host = 'https://api-testnet.ftmscan.com';
-      break;
-    case '42161':
-      host = 'https://api.arbiscan.io'
-      break;
-    default:
-      return logError(`Network with chainId: ${chainId} not supported`);
+  const networkName = hre.network.name;
+  let host = config.apiUrl;
+  if (!host) {
+    const chainId = await hre.getChainId();
+    switch (chainId) {
+      case '1':
+        host = 'https://api.etherscan.io';
+        break;
+      case '3':
+        host = 'https://api-ropsten.etherscan.io';
+        break;
+      case '4':
+        host = 'https://api-rinkeby.etherscan.io';
+        break;
+      case '5':
+        host = 'https://api-goerli.etherscan.io';
+        break;
+      case '10':
+        host = 'https://api-optimistic.etherscan.io';
+        break;
+      case '42':
+        host = 'https://api-kovan.etherscan.io';
+        break;
+      case '97':
+        host = 'https://api-testnet.bscscan.com';
+        break;
+      case '56':
+        host = 'https://api.bscscan.com';
+        break;
+      case '69':
+        host = 'https://api-kovan-optimistic.etherscan.io';
+        break;
+      case '70':
+        host = 'https://api.hooscan.com';
+        break;
+      case '77':
+        host = 'https://blockscout.com/poa/sokol';
+        break;
+      case '128':
+        host = 'https://api.hecoinfo.com';
+        break;
+      case '137':
+        host = 'https://api.polygonscan.com';
+        break;
+      case '250':
+        host = 'https://api.ftmscan.com';
+        break;
+      case '256':
+        host = 'https://api-testnet.hecoinfo.com';
+        break;
+      case '420':
+        host = 'https://api-goerli-optimism.etherscan.io';
+        break;
+      case '588':
+        host = 'https://stardust-explorer.metis.io';
+        break;
+      case '1088':
+        host = 'https://andromeda-explorer.metis.io';
+        break;
+      case '1285':
+        host = 'https://api-moonriver.moonscan.io';
+        break;
+      case '80001':
+        host = 'https://api-testnet.polygonscan.com';
+        break;
+      case '4002':
+        host = 'https://api-testnet.ftmscan.com';
+        break;
+      case '42161':
+        host = 'https://api.arbiscan.io';
+        break;
+      case '421611':
+        host = 'https://api-testnet.arbiscan.io';
+        break;
+      case '421613':
+        host = 'https://api-goerli.arbiscan.io';
+        break;
+      case '43113':
+        host = 'https://api-testnet.snowtrace.io';
+        break;
+      case '43114':
+        host = 'https://api.snowtrace.io';
+        break;
+      case '11155111':
+        host = 'https://api-sepolia.etherscan.io';
+        break;
+      default:
+        return logError(
+          `Network with chainId: ${chainId} not supported. You can specify the url manually via --api-url <url>.`
+        );
+    }
   }
 
   async function submit(name: string, useSolcInput?: boolean) {
@@ -330,11 +402,12 @@ export async function submitSources(
       licenseType,
     };
 
+    const formDataAsString = qs.stringify(postData);
     const submissionResponse = await axios.request({
       url: `${host}/api`,
       method: 'POST',
       headers: {'content-type': 'application/x-www-form-urlencoded'},
-      data: qs.stringify(postData),
+      data: formDataAsString,
     });
     const {data: submissionData} = submissionResponse;
 
@@ -346,10 +419,24 @@ export async function submitSources(
         `contract ${name} failed to submit : "${submissionData.message}" : "${submissionData.result}"`,
         submissionData
       );
+      writeRequestIfRequested(
+        config?.writePostData || false,
+        networkName,
+        name,
+        formDataAsString,
+        postData
+      );
       return;
     }
     if (!guid) {
       logError(`contract submission for ${name} failed to return a guid`);
+      writeRequestIfRequested(
+        config?.writePostData || false,
+        networkName,
+        name,
+        formDataAsString,
+        postData
+      );
       return;
     }
 
@@ -366,11 +453,17 @@ export async function submitSources(
         }
       );
       const {data: statusData} = statusResponse;
-      if (statusData.status === '1') {
-        return 'success';
-      }
+
+      // blockscout seems to return status == 1 in case of failure
+      // so we check string first
       if (statusData.result === 'Pending in queue') {
         return undefined;
+      }
+      if (statusData.result !== 'Fail - Unable to verify') {
+        if (statusData.status === '1') {
+          // console.log(statusData);
+          return 'success';
+        }
       }
       logError(
         `Failed to verify contract ${name}: ${statusData.message}, ${statusData.result}`
@@ -417,19 +510,38 @@ export async function submitSources(
         );
         await submit(name, true);
       } else {
+        writeRequestIfRequested(
+          config?.writePostData || false,
+          networkName,
+          name,
+          formDataAsString,
+          postData
+        );
         logInfo(
           'Etherscan sometime fails to verify when only metadata sources are given. See https://github.com/ethereum/solidity/issues/9573. You can add the option --solc-input to try with full solc-input sources. This will include all contract source in the etherscan result, even the one not relevant to the contract being verified'
         );
       }
+    } else {
+      writeRequestIfRequested(
+        config?.writePostData || false,
+        networkName,
+        name,
+        formDataAsString,
+        postData
+      );
     }
   }
 
-  for (const name of Object.keys(all)) {
-    await submit(name);
+  if (config.contractName) {
+    await submit(config.contractName);
+  } else {
+    for (const name of Object.keys(all)) {
+      await submit(name);
 
-    if (sleepBetween) {
-      // sleep between each verification so we don't exceed the API rate limit
-      await sleep(500);
+      if (sleepBetween) {
+        // sleep between each verification so we don't exceed the API rate limit
+        await sleep(500);
+      }
     }
   }
 }

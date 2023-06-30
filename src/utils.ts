@@ -6,11 +6,13 @@ import {getAddress, isAddress} from '@ethersproject/address';
 import {Interface, FunctionFragment, Fragment} from '@ethersproject/abi';
 import {Artifact, HardhatRuntimeEnvironment, Network} from 'hardhat/types';
 import {BigNumber} from '@ethersproject/bignumber';
-import {ExtendedArtifact, MultiExport} from '../types';
+import {ABI, Export, ExtendedArtifact, MultiExport} from '../types';
 import {Artifacts} from 'hardhat/internal/artifacts';
 import murmur128 from 'murmur-128';
 import {Transaction} from '@ethersproject/transactions';
 import {store} from './globalStore';
+import {ERRORS} from 'hardhat/internal/core/errors-list';
+import {HardhatError} from 'hardhat/internal/core/errors';
 
 function getOldArtifactSync(
   name: string,
@@ -28,18 +30,30 @@ function getOldArtifactSync(
   return artifact;
 }
 
-export async function getArtifactFromFolder(
+export async function getArtifactFromFolders(
   name: string,
-  folderPath: string
+  folderPaths: string[]
 ): Promise<Artifact | ExtendedArtifact | undefined> {
-  const artifacts = new Artifacts(folderPath);
-  let artifact = getOldArtifactSync(name, folderPath);
-  if (!artifact) {
-    try {
-      artifact = artifacts.readArtifactSync(name);
-    } catch (e) {}
+  for (const onepath of folderPaths) {
+    const artifacts = new Artifacts(onepath);
+    let artifact = getOldArtifactSync(name, onepath);
+    if (!artifact) {
+      try {
+        artifact = artifacts.readArtifactSync(name);
+      } catch (e) {
+        const hardhatError = e as HardhatError;
+        if (
+          hardhatError.number &&
+          hardhatError.number == ERRORS.ARTIFACTS.MULTIPLE_FOUND.number
+        ) {
+          throw e;
+        }
+      }
+    }
+    if (artifact) {
+      return artifact;
+    }
   }
-  return artifact;
 }
 
 // TODO
@@ -47,39 +61,49 @@ export async function getArtifactFromFolder(
 // const buildInfoCache
 // const hashCache: Record<string, string> = {};
 
-export async function getExtendedArtifactFromFolder(
+export async function getExtendedArtifactFromFolders(
   name: string,
-  folderPath: string
+  folderPaths: string[]
 ): Promise<ExtendedArtifact | undefined> {
-  const artifacts = new Artifacts(folderPath);
-  let artifact = getOldArtifactSync(name, folderPath);
-  if (!artifact && (await artifacts.artifactExists(name))) {
-    const hardhatArtifact: Artifact = await artifacts.readArtifact(name);
-    // check if name is already a fullyQualifiedName
-    let fullyQualifiedName = name;
-    let contractName = name;
-    if (!fullyQualifiedName.includes(':')) {
-      fullyQualifiedName = `${hardhatArtifact.sourceName}:${name}`;
-    } else {
-      contractName = fullyQualifiedName.split(':')[1];
+  for (const folderPath of folderPaths) {
+    const artifacts = new Artifacts(folderPath);
+    let artifact = getOldArtifactSync(name, folderPath);
+    if (
+      !artifact &&
+      (await artifacts.artifactExists(name).catch(() => false))
+    ) {
+      const hardhatArtifact: Artifact = await artifacts.readArtifact(name);
+      // check if name is already a fullyQualifiedName
+      let fullyQualifiedName = name;
+      let contractName = name;
+      if (!fullyQualifiedName.includes(':')) {
+        fullyQualifiedName = `${hardhatArtifact.sourceName}:${name}`;
+      } else {
+        contractName = fullyQualifiedName.split(':')[1];
+      }
+      // TODO try catch ? in case debug file is missing
+      const buildInfo = await artifacts.getBuildInfo(fullyQualifiedName);
+      if (buildInfo) {
+        const solcInput = JSON.stringify(buildInfo.input, null, '  ');
+        const solcInputHash = Buffer.from(murmur128(solcInput)).toString('hex');
+        artifact = {
+          ...hardhatArtifact,
+          ...buildInfo.output.contracts[hardhatArtifact.sourceName][
+            contractName
+          ],
+          solcInput,
+          solcInputHash,
+        };
+      } else {
+        artifact = {
+          ...hardhatArtifact,
+        };
+      }
     }
-    const buildInfo = await artifacts.getBuildInfo(fullyQualifiedName);
-    if (buildInfo) {
-      const solcInput = JSON.stringify(buildInfo.input, null, '  ');
-      const solcInputHash = Buffer.from(murmur128(solcInput)).toString('hex');
-      artifact = {
-        ...hardhatArtifact,
-        ...buildInfo.output.contracts[hardhatArtifact.sourceName][contractName],
-        solcInput,
-        solcInputHash,
-      };
-    } else {
-      artifact = {
-        ...hardhatArtifact,
-      };
+    if (artifact) {
+      return artifact;
     }
   }
-  return artifact;
 }
 
 export function loadAllDeployments(
@@ -88,6 +112,7 @@ export function loadAllDeployments(
   onlyABIAndAddress?: boolean,
   externalDeployments?: {[networkName: string]: string[]}
 ): MultiExport {
+  const networksFound: {[networkName: string]: Export} = {};
   const all: MultiExport = {}; // TODO any is chainConfig
   fs.readdirSync(deploymentsPath).forEach((fileName) => {
     const fPath = path.resolve(deploymentsPath, fileName);
@@ -107,18 +132,20 @@ export function loadAllDeployments(
       }
 
       if (!all[chainIdFound]) {
-        all[chainIdFound] = {};
+        all[chainIdFound] = [];
       }
       const contracts = loadDeployments(
         deploymentsPath,
         fileName,
         onlyABIAndAddress
       );
-      all[chainIdFound][name] = {
+      const network = {
         name,
         chainId: chainIdFound,
         contracts,
       };
+      networksFound[name] = network;
+      all[chainIdFound].push(network);
     }
   });
 
@@ -135,11 +162,23 @@ export function loadAllDeployments(
             undefined,
             networkChainId
           );
-          all[networkChainId][networkName] = {
-            name: networkName,
-            chainId: networkChainId,
-            contracts,
-          };
+          const networkExist = networksFound[networkName];
+          if (networkExist) {
+            if (networkChainId !== networkExist.chainId) {
+              throw new Error(
+                `mismatch between external deployment network ${networkName} chainId: ${networkChainId} vs existing chainId: ${networkExist.chainId}`
+              );
+            }
+            networkExist.contracts = {...contracts, ...networkExist.contracts};
+          } else {
+            const network = {
+              name: networkName,
+              chainId: networkChainId,
+              contracts,
+            };
+            networksFound[networkName] = network;
+            all[networkChainId].push(network);
+          }
         } else {
           console.warn(
             `export-all limitation: attempting to load external deployments from ${folderPath} without chainId info. Please set the chainId in the network config for ${networkName}`
@@ -296,10 +335,29 @@ function transformNamedAccounts(
           // eslint-disable-next-line no-case-declarations
           const protocolSplit = spec.split('://');
           if (protocolSplit.length > 1) {
-            if (protocolSplit[0].toLowerCase() === 'ledger') {
+            if (protocolSplit[0].toLowerCase() === 'external') {
               address = protocolSplit[1];
               addressesToProtocol[address.toLowerCase()] =
                 protocolSplit[0].toLowerCase();
+              // knownAccountsDict[address.toLowerCase()] = true; // TODO ? this would prevent auto impersonation in fork/test
+            } else if (
+              protocolSplit[0].toLowerCase() === 'trezor'
+            ) {
+              address = protocolSplit[1];
+              addressesToProtocol[address.toLowerCase()] =
+                protocolSplit[0].toLowerCase();
+            } else if (protocolSplit[0].toLowerCase() === 'ledger') {
+              const addressSplit = protocolSplit[1].split(':');
+              if (addressSplit.length > 1) {
+                address = addressSplit[1];
+                addressesToProtocol[
+                  address.toLowerCase()
+                ] = `ledger://${addressSplit[0]}`;
+              } else {
+                address = protocolSplit[1];
+                addressesToProtocol[address.toLowerCase()] =
+                  "ledger://m/44'/60'/0'/0/0";
+              }
               // knownAccountsDict[address.toLowerCase()] = true; // TODO ? this would prevent auto impersonation in fork/test
             } else if (protocolSplit[0].toLowerCase() === 'privatekey') {
               address = new Wallet(protocolSplit[1]).address;
@@ -503,6 +561,13 @@ export function getDeployPaths(network: Network): string[] {
   } else {
     return store.networks[networkName]?.deploy; // skip network.deploy
   }
+}
+
+export function filterABI(
+  abi: ABI,
+  excludeSighashes: Set<string>,
+): any[] {
+  return abi.filter(fragment => fragment.type !== 'function' || !excludeSighashes.has(Interface.getSighash(Fragment.from(fragment) as FunctionFragment)));
 }
 
 export function mergeABIs(

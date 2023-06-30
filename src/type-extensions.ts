@@ -1,7 +1,11 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import 'hardhat/types/runtime';
 import 'hardhat/types/config';
-import {Address, DeploymentsExtension} from '../types';
+import {
+  Address,
+  DeploymentsExtension,
+  DeterministicDeploymentInfo,
+} from '../types';
 import {EthereumProvider} from 'hardhat/types';
 
 declare module 'hardhat/types/config' {
@@ -12,18 +16,21 @@ declare module 'hardhat/types/config' {
         | number
         | {[network: string]: null | number | string};
     };
+    deterministicDeployment?:
+      | {
+          [network: string]: DeterministicDeploymentInfo;
+        }
+      | ((network: string) => DeterministicDeploymentInfo | undefined);
     external?: {
       deployments?: {
         [networkName: string]: string[];
       };
       contracts?: {
-        artifacts: string;
+        artifacts: string | string[];
         deploy?: string;
       }[];
     };
-    etherscan?: {
-      apiKey?: string;
-    };
+    verify?: {etherscan?: {apiKey?: string}};
   }
 
   interface HardhatConfig {
@@ -33,18 +40,21 @@ declare module 'hardhat/types/config' {
         | number
         | {[network: string]: null | number | string};
     };
+    deterministicDeployment?:
+      | {
+          [network: string]: DeterministicDeploymentInfo;
+        }
+      | ((network: string) => DeterministicDeploymentInfo | undefined);
     external?: {
       deployments?: {
         [networkName: string]: string[];
       };
       contracts?: {
-        artifacts: string;
+        artifacts: string[];
         deploy?: string;
       }[];
     };
-    etherscan: {
-      apiKey?: string;
-    };
+    verify: {etherscan?: {apiKey?: string}};
   }
 
   interface HardhatNetworkUserConfig {
@@ -53,6 +63,9 @@ declare module 'hardhat/types/config' {
     tags?: string[];
     deploy?: string | string[];
     companionNetworks?: {[name: string]: string};
+    verify?: {etherscan?: {apiKey?: string; apiUrl?: string}};
+    zksync?: boolean;
+    autoImpersonate?: boolean;
   }
 
   interface HttpNetworkUserConfig {
@@ -61,6 +74,9 @@ declare module 'hardhat/types/config' {
     tags?: string[];
     deploy?: string | string[];
     companionNetworks?: {[name: string]: string};
+    verify?: {etherscan?: {apiKey?: string; apiUrl?: string}};
+    zksync?: boolean;
+    autoImpersonate?: boolean;
   }
 
   interface ProjectPathsUserConfig {
@@ -75,6 +91,9 @@ declare module 'hardhat/types/config' {
     tags: string[];
     deploy?: string[];
     companionNetworks: {[name: string]: string};
+    verify?: {etherscan?: {apiKey?: string; apiUrl?: string}};
+    zksync?: boolean;
+    autoImpersonate?: boolean;
   }
 
   interface HttpNetworkConfig {
@@ -83,6 +102,9 @@ declare module 'hardhat/types/config' {
     tags: string[];
     deploy?: string[];
     companionNetworks: {[name: string]: string};
+    verify?: {etherscan?: {apiKey?: string; apiUrl?: string}};
+    zksync?: boolean;
+    autoImpersonate?: boolean;
   }
 
   interface ProjectPathsConfig {
@@ -119,5 +141,8 @@ declare module 'hardhat/types/runtime' {
     tags: Record<string, boolean>;
     deploy: string[];
     companionNetworks: {[name: string]: string};
+    verify?: {etherscan?: {apiKey?: string; apiUrl?: string}};
+    zksync?: boolean;
+    autoImpersonate?: boolean;
   }
 }
